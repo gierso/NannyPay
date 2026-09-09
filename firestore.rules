@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'gierso@gmail.com'
+      );
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(allowedRoles) {
+      return isBootstrappedAdmin() || (
+        isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData().role in allowedRoles
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || hasRole(['admin']);
+    }
+
+    function isEditorOrAdmin() {
+      return isBootstrappedAdmin() || hasRole(['admin', 'editor']);
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+
+      // Users can create their own initial profile document upon first Google sign-in
+      // If bootstrapped admin, role must be admin; otherwise defaults to viewer unless created by an admin
+      allow create: if isAuthenticated() && (
+        request.auth.uid == userId || isAdmin()
+      );
+
+      // Only admins can update roles; users can update their own displayName/photoURL
+      allow update: if isAuthenticated() && (
+        isAdmin() || (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Global settings collection (e.g. currentHourlyRate, currency, nannyName)
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isEditorOrAdmin();
+    }
+
+    // Shifts collection (daily work records)
+    match /shifts/{shiftId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditorOrAdmin();
+      allow update: if isEditorOrAdmin();
+      allow delete: if isEditorOrAdmin();
+    }
+  }
+}

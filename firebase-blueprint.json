@@ -1,0 +1,152 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and permission role in NannyPay",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User Google email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full name or display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar photo URL"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "editor", "viewer"],
+          "description": "Access role: admin (manage all + users), editor (super user: add/edit shifts & rates), viewer (read only)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user was first registered"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the user was last updated"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Global application settings such as current default hourly rate",
+      "type": "object",
+      "properties": {
+        "currentHourlyRate": {
+          "type": "number",
+          "description": "The active hourly rate in effect for future shifts"
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency symbol or code (e.g. $, MXN, USD, EUR)"
+        },
+        "nannyName": {
+          "type": "string",
+          "description": "Default name of the nanny"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the settings were last updated"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Email of the user who updated the settings"
+        }
+      },
+      "required": ["currentHourlyRate", "currency"]
+    },
+    "Shift": {
+      "title": "Shift",
+      "description": "Daily work record for the nanny with frozen rate at time of creation",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date",
+          "description": "Work date formatted as YYYY-MM-DD"
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Arrival time (HH:mm)"
+        },
+        "endTime": {
+          "type": "string",
+          "description": "Departure time (HH:mm)"
+        },
+        "hoursWorked": {
+          "type": "number",
+          "description": "Calculated hours worked (e.g. 8.5)"
+        },
+        "hourlyRate": {
+          "type": "number",
+          "description": "Frozen hourly rate applied to this specific day"
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Calculated pay for this day (hoursWorked * hourlyRate)"
+        },
+        "nannyName": {
+          "type": "string",
+          "description": "Name of the nanny for this shift"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes or comments about the shift"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "paid"],
+          "description": "Payment status: pending deposit or paid"
+        },
+        "paidAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the shift was paid or deposited"
+        },
+        "weekKey": {
+          "type": "string",
+          "description": "Key representing the week (e.g. 2026-W37 or Monday date YYYY-MM-DD) for fast weekly grouping"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "User email who logged this shift"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last modification"
+        }
+      },
+      "required": ["date", "startTime", "endTime", "hoursWorked", "hourlyRate", "totalAmount", "status", "weekKey"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user roles and profiles"
+    },
+    "/settings/{settingId}": {
+      "schema": "AppSetting",
+      "description": "Application settings document (e.g. config)"
+    },
+    "/shifts/{shiftId}": {
+      "schema": "Shift",
+      "description": "Individual daily work shift records"
+    }
+  }
+}

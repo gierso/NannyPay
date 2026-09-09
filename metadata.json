@@ -1,0 +1,6 @@
+{
+  "name": "NannyPay",
+  "description": "Control semanal de pagos, horas e historial para niñeras con roles de acceso compartidos",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
