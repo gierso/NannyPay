@@ -13,6 +13,7 @@ import { UserManagementModal } from './components/UserManagementModal';
 import { WeeklyShareModal } from './components/WeeklyShareModal';
 import { LoginView } from './components/LoginView';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { InstallAppPrompt } from './components/InstallAppPrompt';
 import { Shift } from './types';
 import { getWeekPeriod } from './lib/dateUtils';
 import { Baby, Loader2 } from 'lucide-react';
@@ -46,8 +47,11 @@ const MainContent: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-stone-50">
-        <LoginView />
+      <div className="min-h-screen bg-stone-50 flex flex-col">
+        <InstallAppPrompt />
+        <div className="flex-1 flex items-center justify-center">
+          <LoginView />
+        </div>
       </div>
     );
   }
@@ -60,6 +64,7 @@ const MainContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 flex flex-col">
+      <InstallAppPrompt />
       {/* Navigation Header */}
       <Header
         currentView={currentView}

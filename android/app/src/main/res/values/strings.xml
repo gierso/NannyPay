@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NannyPay</string>
+    <string name="title_activity_main">NannyPay</string>
+    <string name="package_name">com.nannypay.app</string>
+    <string name="custom_url_scheme">com.nannypay.app</string>
+</resources>

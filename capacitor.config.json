@@ -1,0 +1,8 @@
+{
+  "appId": "com.nannypay.app",
+  "appName": "NannyPay",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
