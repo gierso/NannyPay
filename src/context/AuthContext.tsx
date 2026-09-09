@@ -21,6 +21,7 @@ interface AuthContextType {
   role: UserRole;
   isAdmin: boolean;
   isEditor: boolean;
+  isViewer: boolean;
   canEdit: boolean;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
@@ -128,6 +129,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setAuthError('La ventana de inicio de sesión fue cerrada.');
       } else if (error.code === 'auth/popup-blocked') {
         setAuthError('El navegador bloqueó la ventana emergente. Por favor permite popups.');
+      } else if (error.code === 'auth/unauthorized-domain') {
+        const currentDomain = window.location.hostname;
+        setAuthError(
+          `El dominio "${currentDomain}" aún no está autorizado en Firebase Authentication. Agrega "${currentDomain}" en Firebase Console > Authentication > Settings > Authorized domains.`
+        );
       } else {
         setAuthError(error.message || 'Error al iniciar sesión con Google.');
       }
@@ -147,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const role: UserRole = isBootstrap ? 'admin' : (userProfile?.role || 'viewer');
   const isAdmin = role === 'admin';
   const isEditor = role === 'editor';
+  const isViewer = role === 'viewer';
   const canEdit = isAdmin || isEditor;
 
   return (
@@ -157,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role,
         isAdmin,
         isEditor,
+        isViewer,
         canEdit,
         loading,
         loginWithGoogle,

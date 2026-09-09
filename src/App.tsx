@@ -12,6 +12,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { UserManagementModal } from './components/UserManagementModal';
 import { WeeklyShareModal } from './components/WeeklyShareModal';
 import { LoginView } from './components/LoginView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Shift } from './types';
 import { getWeekPeriod } from './lib/dateUtils';
 import { Baby, Loader2 } from 'lucide-react';
@@ -129,10 +130,12 @@ const MainContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppProvider>
-        <MainContent />
-      </AppProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppProvider>
+          <MainContent />
+        </AppProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
