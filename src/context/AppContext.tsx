@@ -50,13 +50,50 @@ const DEFAULT_SETTINGS: AppSettings = {
   nannyName: 'Niñera',
 };
 
+const LOCAL_STORAGE_SHIFTS_KEY = 'nannypay_shifts_cache';
+const LOCAL_STORAGE_SETTINGS_KEY = 'nannypay_settings_cache';
+
+const getInitialLocalShifts = (): Shift[] => {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_SHIFTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveShiftsToLocalStorage = (shiftsToSave: Shift[]) => {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_SHIFTS_KEY, JSON.stringify(shiftsToSave));
+  } catch (e) {
+    console.debug('Error saving local shifts cache:', e);
+  }
+};
+
+const getInitialLocalSettings = (): AppSettings => {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_SETTINGS_KEY);
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+};
+
+const saveSettingsToLocalStorage = (newSettings: AppSettings) => {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_SETTINGS_KEY, JSON.stringify(newSettings));
+  } catch (e) {
+    console.debug('Error saving local settings cache:', e);
+  }
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, canEdit, isAdmin } = useAuth();
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [loadingShifts, setLoadingShifts] = useState<boolean>(true);
+  const [settings, setSettings] = useState<AppSettings>(getInitialLocalSettings);
+  const [shifts, setShifts] = useState<Shift[]>(getInitialLocalShifts);
+  const [loadingShifts, setLoadingShifts] = useState<boolean>(false);
   const [selectedWeek, setSelectedWeek] = useState<WeekPeriod>(getWeekPeriod(new Date()));
   const [allUsersList, setAllUsersList] = useState<{ uid: string; email: string; displayName: string; role: string; photoURL?: string }[]>([]);
 
@@ -67,28 +104,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const settingsRef = doc(db, 'settings', 'config');
     const unsubscribe = onSnapshot(
       settingsRef,
-      async (docSnap) => {
+      (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as AppSettings;
-          setSettings({
+          const merged: AppSettings = {
             currentHourlyRate: Number(data.currentHourlyRate) || 100,
             currency: data.currency || '$',
             nannyName: data.nannyName || 'Niñera',
             updatedAt: data.updatedAt,
             updatedBy: data.updatedBy,
-          });
+          };
+          setSettings(merged);
+          saveSettingsToLocalStorage(merged);
         } else {
           // Initialize default settings doc if missing and user can edit
           if (canEdit) {
-            try {
-              await setDoc(settingsRef, {
-                ...DEFAULT_SETTINGS,
-                updatedAt: new Date().toISOString(),
-                updatedBy: currentUser.email,
-              });
-            } catch (err) {
-              console.warn('Could not initialize settings document:', err);
-            }
+            setDoc(settingsRef, {
+              ...DEFAULT_SETTINGS,
+              updatedAt: new Date().toISOString(),
+              updatedBy: currentUser.email,
+            }).catch((err) => console.debug('Could not initialize settings document:', err));
           }
         }
       },
@@ -103,12 +138,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // 2. Listen to shifts
   useEffect(() => {
     if (!currentUser) {
-      setShifts([]);
-      setLoadingShifts(false);
       return;
     }
 
-    setLoadingShifts(true);
     const shiftsQuery = query(collection(db, 'shifts'), orderBy('date', 'desc'));
 
     const unsubscribe = onSnapshot(
@@ -136,7 +168,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             updatedAt: data.updatedAt,
           });
         });
-        setShifts(items);
+
+        setShifts((prevLocal) => {
+          // Merge remote cloud items with any local items that might not have reached cloud yet
+          const map = new Map<string, Shift>();
+          prevLocal.forEach((s) => map.set(s.id, s));
+          items.forEach((s) => map.set(s.id, s));
+          const merged = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+          saveShiftsToLocalStorage(merged);
+          return merged;
+        });
         setLoadingShifts(false);
       },
       (error) => {
@@ -249,7 +290,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const totalAmount = Math.round(hours * rateToApply * 100) / 100;
     const weekKey = getWeekKeyForDate(data.date);
 
-    const shiftPayload = {
+    // Generate real Firestore document reference ID
+    const newDocRef = doc(collection(db, 'shifts'));
+    const shiftId = newDocRef.id;
+
+    const newShift: Shift = {
+      id: shiftId,
       date: data.date,
       startTime: data.startTime,
       endTime: data.endTime,
@@ -264,15 +310,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdBy: currentUser.email || currentUser.uid,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      serverTimestamp: serverTimestamp(),
     };
 
-    const newDocRef = doc(collection(db, 'shifts'));
-    try {
-      await setDoc(newDocRef, shiftPayload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'shifts');
-    }
+    // 1. UPDATE LOCAL STATE AND STORAGE IMMEDIATELY (0ms latency, zero freezing)
+    setShifts((prev) => {
+      const updated = [newShift, ...prev.filter((s) => s.id !== shiftId)];
+      saveShiftsToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. BACKGROUND CLOUD SYNC (Non-blocking)
+    setDoc(newDocRef, {
+      ...newShift,
+      serverTimestamp: serverTimestamp(),
+    }).catch((error) => {
+      console.warn('Background shift sync notice (saved locally):', error);
+    });
   };
 
   const updateShift = async (shiftId: string, data: Partial<Shift>) => {
@@ -293,7 +346,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const totalAmount = Math.round(hours * updatedRate * 100) / 100;
     const weekKey = getWeekKeyForDate(updatedDate);
 
-    const updatePayload: Record<string, any> = {
+    const updatedShift: Shift = {
+      ...existing,
       ...data,
       date: updatedDate,
       startTime: updatedStart,
@@ -306,12 +360,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: new Date().toISOString(),
     };
 
+    // 1. UPDATE LOCAL STATE IMMEDIATELY
+    setShifts((prev) => {
+      const updated = prev.map((s) => (s.id === shiftId ? updatedShift : s));
+      saveShiftsToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. BACKGROUND CLOUD SYNC
     const shiftRef = doc(db, 'shifts', shiftId);
-    try {
-      await updateDoc(shiftRef, updatePayload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `shifts/${shiftId}`);
-    }
+    updateDoc(shiftRef, {
+      ...updatedShift,
+      updatedAt: new Date().toISOString(),
+    }).catch((error) => {
+      console.warn('Background update sync notice:', error);
+    });
   };
 
   const deleteShift = async (shiftId: string) => {
@@ -319,12 +382,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('No tienes permisos para eliminar este registro.');
     }
 
+    // 1. Remove from local state immediately
+    setShifts((prev) => {
+      const updated = prev.filter((s) => s.id !== shiftId);
+      saveShiftsToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. BACKGROUND CLOUD SYNC
     const shiftRef = doc(db, 'shifts', shiftId);
-    try {
-      await deleteDoc(shiftRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `shifts/${shiftId}`);
-    }
+    deleteDoc(shiftRef).catch((error) => {
+      console.warn('Background delete sync notice:', error);
+    });
   };
 
   const updateSettings = async (newSettings: Partial<AppSettings>) => {
@@ -332,19 +401,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('No tienes permisos para modificar la configuración.');
     }
 
-    const settingsRef = doc(db, 'settings', 'config');
-    const payload = {
+    const payload: AppSettings = {
       ...settings,
       ...newSettings,
       updatedAt: new Date().toISOString(),
       updatedBy: currentUser.email || currentUser.uid,
     };
 
-    try {
-      await setDoc(settingsRef, payload, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'settings/config');
-    }
+    // 1. Save locally immediately
+    setSettings(payload);
+    saveSettingsToLocalStorage(payload);
+
+    // 2. Background cloud sync
+    const settingsRef = doc(db, 'settings', 'config');
+    setDoc(settingsRef, payload, { merge: true }).catch((error) => {
+      console.warn('Background settings sync notice:', error);
+    });
   };
 
   const markWeekAsPaid = async (weekShifts: Shift[]) => {
@@ -353,18 +425,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const now = new Date().toISOString();
+    const paidIds = new Set(weekShifts.map((s) => s.id));
+
+    // 1. Update locally immediately
+    setShifts((prev) => {
+      const updated = prev.map((s) =>
+        paidIds.has(s.id) && s.status !== 'paid' ? { ...s, status: 'paid' as const, paidAt: now, updatedAt: now } : s
+      );
+      saveShiftsToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. Background sync
     for (const shift of weekShifts) {
       if (shift.id && shift.status !== 'paid') {
         const shiftRef = doc(db, 'shifts', shift.id);
-        try {
-          await updateDoc(shiftRef, {
-            status: 'paid',
-            paidAt: now,
-            updatedAt: now,
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `shifts/${shift.id}`);
-        }
+        updateDoc(shiftRef, {
+          status: 'paid',
+          paidAt: now,
+          updatedAt: now,
+        }).catch((err) => console.warn('Sync paid status notice:', err));
       }
     }
   };
@@ -372,16 +452,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleShiftStatus = async (shift: Shift) => {
     if (!currentUser || !canEdit || !shift.id) return;
     const newStatus = shift.status === 'paid' ? 'pending' : 'paid';
+    const now = new Date().toISOString();
+
+    // 1. Update locally immediately
+    setShifts((prev) => {
+      const updated = prev.map((s) =>
+        s.id === shift.id
+          ? { ...s, status: newStatus as 'pending' | 'paid', paidAt: newStatus === 'paid' ? now : null, updatedAt: now }
+          : s
+      );
+      saveShiftsToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. Background sync
     const shiftRef = doc(db, 'shifts', shift.id);
-    try {
-      await updateDoc(shiftRef, {
-        status: newStatus,
-        paidAt: newStatus === 'paid' ? new Date().toISOString() : null,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `shifts/${shift.id}`);
-    }
+    updateDoc(shiftRef, {
+      status: newStatus,
+      paidAt: newStatus === 'paid' ? now : null,
+      updatedAt: now,
+    }).catch((err) => console.warn('Sync toggle status notice:', err));
   };
 
   const updateUserRole = async (uid: string, newRole: 'admin' | 'editor' | 'viewer') => {
@@ -389,15 +479,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Solo los administradores pueden cambiar roles de usuario.');
     }
 
+    setAllUsersList((prev) =>
+      prev.map((u) => (u.uid === uid ? { ...u, role: newRole } : u))
+    );
+
     const targetUserRef = doc(db, 'users', uid);
-    try {
-      await updateDoc(targetUserRef, {
-        role: newRole,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
-    }
+    updateDoc(targetUserRef, {
+      role: newRole,
+      updatedAt: new Date().toISOString(),
+    }).catch((error) => {
+      console.warn('Background user role sync notice:', error);
+    });
   };
 
   return (
