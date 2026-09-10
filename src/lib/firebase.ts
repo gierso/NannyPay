@@ -9,8 +9,10 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-// CRITICAL: Specifying firestoreDatabaseId is required by AI Studio setup
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// CRITICAL: Connect to custom database if specified, otherwise default to standard project database
+export const db = firebaseConfig.firestoreDatabaseId
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
 
 export enum OperationType {
   CREATE = 'create',

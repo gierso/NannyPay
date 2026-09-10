@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Baby, LogIn, ShieldCheck, Clock, Users, CheckCircle2, AlertCircle } from 'lucide-react';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 export const LoginView: React.FC = () => {
   const { loginWithGoogle, authError, clearAuthError, loading } = useAuth();
@@ -29,7 +30,7 @@ export const LoginView: React.FC = () => {
               {authError.includes('Firebase Console') && (
                 <div className="mt-2.5 flex flex-wrap gap-2">
                   <a
-                    href="https://console.firebase.google.com/project/esoteric-bus-6gmzr/authentication/settings"
+                    href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs transition-colors shadow-xs"
