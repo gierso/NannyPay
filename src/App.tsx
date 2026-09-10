@@ -21,6 +21,7 @@ import { Baby, Loader2 } from 'lucide-react';
 const MainContent: React.FC = () => {
   const { currentUser, loading } = useAuth();
   const { currentWeekShifts, setSelectedWeek } = useApp();
+  const [forcedReady, setForcedReady] = useState(false);
 
   const [currentView, setCurrentView] = useState<'week' | 'history'>('week');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -29,17 +30,24 @@ const MainContent: React.FC = () => {
   const [isUsersOpen, setIsUsersOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
 
-  if (loading) {
+  if (loading && !forcedReady) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto animate-pulse">
             <Baby className="w-6 h-6" />
           </div>
-          <div className="flex items-center gap-2 text-stone-600 text-sm font-medium">
+          <div className="flex items-center gap-2 text-stone-600 text-sm font-medium justify-center">
             <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
             <span>Cargando NannyPay...</span>
           </div>
+          <button
+            type="button"
+            onClick={() => setForcedReady(true)}
+            className="text-xs text-amber-700 hover:text-amber-900 underline font-medium pt-2 block mx-auto"
+          >
+            ¿Tarda en responder? Continuar
+          </button>
         </div>
       </div>
     );

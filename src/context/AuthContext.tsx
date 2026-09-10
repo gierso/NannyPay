@@ -43,18 +43,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    // Failsafe timer: NEVER let the app be stuck on loading for more than 1.5 seconds under any network circumstance
+    const failsafeTimer = setTimeout(() => {
+      setLoading(false);
+    }, 1500);
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      clearTimeout(failsafeTimer);
       setCurrentUser(user);
       setAuthError(null);
 
       if (user) {
+        const isBootstrapAdmin = user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
+        const initialProfile: UserProfile = {
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || 'Usuario',
+          photoURL: user.photoURL || undefined,
+          role: isBootstrapAdmin ? 'admin' : 'viewer',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        // Immediately grant profile so UI displays instantly without waiting for network/Firestore roundtrip
+        setUserProfile(initialProfile);
+        setLoading(false);
+
         const userRef = doc(db, 'users', user.uid);
-        
         try {
-          // Listen to user profile in real-time so role changes from Admin apply instantly
+          // Listen to user profile in background
           unsubscribeProfile = onSnapshot(
             userRef,
-            async (docSnap) => {
+            (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 setUserProfile({
@@ -66,42 +86,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   createdAt: data.createdAt,
                   updatedAt: data.updatedAt,
                 });
-                setLoading(false);
               } else {
-                // Initialize default profile
-                const isBootstrapAdmin = user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
-                const newProfile: UserProfile = {
-                  uid: user.uid,
-                  email: user.email || '',
-                  displayName: user.displayName || 'Usuario',
-                  photoURL: user.photoURL || undefined,
-                  role: isBootstrapAdmin ? 'admin' : 'viewer',
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString(),
-                };
-
-                try {
-                  await setDoc(userRef, {
-                    ...newProfile,
-                    firestoreTimestamp: serverTimestamp(),
-                  });
-                  setUserProfile(newProfile);
-                } catch (err) {
-                  console.error('Error saving user profile:', err);
-                  // Still fallback gracefully
-                  setUserProfile(newProfile);
-                }
-                setLoading(false);
+                // Initialize default profile in background
+                setDoc(userRef, {
+                  ...initialProfile,
+                  firestoreTimestamp: serverTimestamp(),
+                }).catch((err) => {
+                  console.debug('User profile initial creation note:', err);
+                });
               }
             },
             (err) => {
-              handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
-              setLoading(false);
+              console.warn('Profile listener note:', err);
             }
           );
         } catch (err) {
-          console.error('Error setting up user snapshot:', err);
-          setLoading(false);
+          console.debug('Error attaching profile listener:', err);
         }
       } else {
         if (unsubscribeProfile) {
@@ -114,6 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => {
+      clearTimeout(failsafeTimer);
       unsubscribeAuth();
       if (unsubscribeProfile) unsubscribeProfile();
     };

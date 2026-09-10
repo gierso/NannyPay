@@ -58,18 +58,17 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+  return errInfo;
 }
 
-// Test connection on boot as recommended in Firebase guidelines
+// Test connection on boot as recommended in Firebase guidelines without blocking the app
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'settings', 'config'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase connection check: Client is offline or database initializing.');
-    }
+    // Non-blocking catch
+    console.debug('Firebase initial ping note:', error);
   }
 }
 
