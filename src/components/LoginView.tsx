@@ -22,14 +22,26 @@ export const LoginView: React.FC = () => {
         </p>
 
         {authError && (
-          <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 text-left flex items-start gap-2">
+          <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 text-left flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <span>{authError}</span>
+              <span className="block leading-relaxed">{authError}</span>
+              {authError.includes('Firebase Console') && (
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <a
+                    href="https://console.firebase.google.com/project/esoteric-bus-6gmzr/authentication/settings"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs transition-colors shadow-xs"
+                  >
+                    Abrir Configuración en Firebase ↗
+                  </a>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={clearAuthError}
-                className="text-[11px] underline block mt-1 font-semibold text-rose-800"
+                className="text-[11px] underline block mt-2 font-semibold text-rose-800 hover:text-rose-950"
               >
                 Cerrar mensaje
               </button>
