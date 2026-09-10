@@ -15,8 +15,15 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="NannyPay" />
-    <script type="module" crossorigin src="./assets/index-BAwoHqSL.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-_ELZyhvg.css">
+    <script>
+      // Fallback: If GitHub Pages serves from root instead of compiled /docs, redirect to /docs/
+      if (window.location.hostname.endsWith('github.io') && !window.location.pathname.includes('/docs')) {
+        var base = window.location.pathname.replace(/\/+$/, '');
+        window.location.replace(base + '/docs/');
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-3qZjtgBe.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DUCB9oFY.css">
   </head>
   <body>
     <div id="root"></div>
