@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import {
   X,
   Users,
@@ -26,7 +24,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   onClose,
 }) => {
   const { currentUser, isAdmin } = useAuth();
-  const { allUsersList, updateUserRole } = useApp();
+  const { allUsersList, updateUserRole, addOrInviteUser } = useApp();
 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<UserRole>('editor');
@@ -39,8 +37,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const handleRoleChange = async (uid: string, newRole: UserRole) => {
     try {
       await updateUserRole(uid, newRole);
-      setMessage({ type: 'success', text: 'Rol actualizado exitosamente.' });
-      setTimeout(() => setMessage(null), 3000);
+      setMessage({ type: 'success', text: 'Rol actualizado y guardado exitosamente.' });
+      setTimeout(() => setMessage(null), 3500);
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al cambiar rol.' });
     }
@@ -54,40 +52,29 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setMessage(null);
 
     try {
-      // In Firestore, create a placeholder doc in 'users' indexed by sanitized email or doc
       const cleanEmail = inviteEmail.toLowerCase().trim();
-      // Check if user already in allUsersList
-      const existing = allUsersList.find((u) => u.email.toLowerCase() === cleanEmail);
-      if (existing) {
-        await updateUserRole(existing.uid, inviteRole);
-        setMessage({
-          type: 'success',
-          text: `Rol de ${existing.displayName || cleanEmail} actualizado a ${inviteRole}.`,
-        });
-      } else {
-        // Create user record using email as ID or custom document
-        const preAuthRef = doc(db, 'users', `invite_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`);
-        await setDoc(preAuthRef, {
-          email: cleanEmail,
-          displayName: inviteName.trim() || cleanEmail.split('@')[0],
-          role: inviteRole,
-          isPreAuthorized: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          firestoreTimestamp: serverTimestamp(),
-        });
-        setMessage({
-          type: 'success',
-          text: `Se autorizó el correo ${cleanEmail} con rol de ${inviteRole}. Cuando inicie sesión con Google, tendrá estos permisos.`,
-        });
-      }
+      const displayName = inviteName.trim() || cleanEmail.split('@')[0];
+
+      await addOrInviteUser({
+        email: cleanEmail,
+        displayName,
+        role: inviteRole,
+      });
+
+      setMessage({
+        type: 'success',
+        text: `Se autorizó a ${displayName} (${cleanEmail}) con rol ${
+          inviteRole === 'admin' ? 'Administrador' : inviteRole === 'editor' ? 'Super Usuario' : 'Solo Lectura'
+        }. El permiso está guardado de forma permanente.`,
+      });
 
       setInviteEmail('');
       setInviteName('');
+      setTimeout(() => setMessage(null), 4000);
     } catch (err: any) {
       setMessage({
         type: 'error',
-        text: err.message || 'Error al pre-autorizar usuario.',
+        text: err.message || 'Error al guardar usuario.',
       });
     } finally {
       setInviteLoading(false);

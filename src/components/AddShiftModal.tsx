@@ -28,6 +28,14 @@ export const AddShiftModal: React.FC<AddShiftModalProps> = ({ isOpen, onClose })
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setHourlyRate(settings.currentHourlyRate);
+      setNannyName(settings.nannyName);
+      setError(null);
+    }
+  }, [isOpen, settings.currentHourlyRate, settings.nannyName]);
+
   if (!isOpen) return null;
 
   const { hours, formattedDuration } = calculateHoursWorked(startTime, endTime, breakMinutes);

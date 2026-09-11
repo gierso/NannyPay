@@ -19,6 +19,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setHourlyRate(settings.currentHourlyRate);
+      setCurrency(settings.currency);
+      setNannyName(settings.nannyName);
+      setError(null);
+      setSavedSuccess(false);
+    }
+  }, [settings, isOpen]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {

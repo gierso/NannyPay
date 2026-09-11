@@ -54,13 +54,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError(null);
 
       if (user) {
-        const isBootstrapAdmin = user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
+        const cleanEmail = user.email?.toLowerCase().trim() || '';
+        const isBootstrapAdmin = cleanEmail === BOOTSTRAP_ADMIN_EMAIL;
+
+        // Check if there is an existing role in local users cache
+        let preassignedRole: UserRole = isBootstrapAdmin ? 'admin' : 'viewer';
+        try {
+          const cachedUsersRaw = localStorage.getItem('nannypay_users_cache');
+          if (cachedUsersRaw) {
+            const cachedUsers = JSON.parse(cachedUsersRaw);
+            const match = cachedUsers.find((u: any) => u.email?.toLowerCase().trim() === cleanEmail);
+            if (match && match.role) {
+              preassignedRole = match.role;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
         const initialProfile: UserProfile = {
           uid: user.uid,
-          email: user.email || '',
-          displayName: user.displayName || 'Usuario',
+          email: cleanEmail,
+          displayName: user.displayName || cleanEmail.split('@')[0] || 'Usuario',
           photoURL: user.photoURL || undefined,
-          role: isBootstrapAdmin ? 'admin' : 'viewer',
+          role: isBootstrapAdmin ? 'admin' : preassignedRole,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -70,26 +87,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
 
         const userRef = doc(db, 'users', user.uid);
+        const inviteDocId = `invite_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const inviteRef = doc(db, 'users', inviteDocId);
+
         try {
           // Listen to user profile in background
           unsubscribeProfile = onSnapshot(
             userRef,
-            (docSnap) => {
+            async (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 setUserProfile({
                   uid: user.uid,
-                  email: user.email || '',
+                  email: cleanEmail,
                   displayName: data.displayName || user.displayName || 'Usuario',
                   photoURL: data.photoURL || user.photoURL || undefined,
-                  role: user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : (data.role || 'viewer'),
+                  role: cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : (data.role || preassignedRole),
                   createdAt: data.createdAt,
                   updatedAt: data.updatedAt,
                 });
               } else {
-                // Initialize default profile in background
-                setDoc(userRef, {
+                // If user document doesn't exist yet, check if there is an invite document
+                let inheritedRole: UserRole = isBootstrapAdmin ? 'admin' : preassignedRole;
+                try {
+                  const inviteSnap = await getDoc(inviteRef);
+                  if (inviteSnap.exists()) {
+                    const invData = inviteSnap.data();
+                    if (invData.role) {
+                      inheritedRole = invData.role as UserRole;
+                    }
+                  }
+                } catch (e) {
+                  console.debug('Invite check note:', e);
+                }
+
+                const profileToPersist = {
                   ...initialProfile,
+                  role: isBootstrapAdmin ? 'admin' : inheritedRole,
+                };
+
+                setUserProfile(profileToPersist);
+
+                setDoc(userRef, {
+                  ...profileToPersist,
                   firestoreTimestamp: serverTimestamp(),
                 }).catch((err) => {
                   console.debug('User profile initial creation note:', err);

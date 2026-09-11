@@ -11,7 +11,7 @@ import {
   orderBy,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { AppSettings, Shift, WeekPeriod, WeekSummary } from '../types';
+import { AppSettings, Shift, WeekPeriod, WeekSummary, UserRole } from '../types';
 import { getWeekPeriod, getWeekKeyForDate, calculateHoursWorked } from '../lib/dateUtils';
 import { useAuth } from './AuthContext';
 
@@ -40,18 +40,29 @@ interface AppContextType {
   updateSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
   markWeekAsPaid: (weekShifts: Shift[]) => Promise<void>;
   toggleShiftStatus: (shift: Shift) => Promise<void>;
-  allUsersList: { uid: string; email: string; displayName: string; role: string; photoURL?: string }[];
-  updateUserRole: (uid: string, newRole: 'admin' | 'editor' | 'viewer') => Promise<void>;
+  allUsersList: AppUserItem[];
+  updateUserRole: (uid: string, newRole: UserRole) => Promise<void>;
+  addOrInviteUser: (user: { email: string; displayName: string; role: UserRole }) => Promise<void>;
+}
+
+export interface AppUserItem {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  photoURL?: string;
+  isPreAuthorized?: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  currentHourlyRate: 100, // e.g. 100 pesos/usd
+  currentHourlyRate: 100, // default fallback
   currency: '$',
   nannyName: 'Niñera',
 };
 
 const LOCAL_STORAGE_SHIFTS_KEY = 'nannypay_shifts_cache';
 const LOCAL_STORAGE_SETTINGS_KEY = 'nannypay_settings_cache';
+const LOCAL_STORAGE_USERS_KEY = 'nannypay_users_cache';
 
 const getInitialLocalShifts = (): Shift[] => {
   try {
@@ -73,7 +84,18 @@ const saveShiftsToLocalStorage = (shiftsToSave: Shift[]) => {
 const getInitialLocalSettings = (): AppSettings => {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_SETTINGS_KEY);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const parsedRate = typeof parsed.currentHourlyRate === 'number'
+        ? parsed.currentHourlyRate
+        : Number(parsed.currentHourlyRate);
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        currentHourlyRate: !isNaN(parsedRate) && parsedRate > 0 ? parsedRate : DEFAULT_SETTINGS.currentHourlyRate,
+      };
+    }
+    return DEFAULT_SETTINGS;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -87,17 +109,62 @@ const saveSettingsToLocalStorage = (newSettings: AppSettings) => {
   }
 };
 
+const getInitialLocalUsers = (): AppUserItem[] => {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_USERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveUsersToLocalStorage = (users: AppUserItem[]) => {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_USERS_KEY, JSON.stringify(users));
+  } catch (e) {
+    console.debug('Error saving local users cache:', e);
+  }
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, canEdit, isAdmin } = useAuth();
+  const { currentUser, canEdit, isAdmin, userProfile } = useAuth();
   const [settings, setSettings] = useState<AppSettings>(getInitialLocalSettings);
   const [shifts, setShifts] = useState<Shift[]>(getInitialLocalShifts);
   const [loadingShifts, setLoadingShifts] = useState<boolean>(false);
   const [selectedWeek, setSelectedWeek] = useState<WeekPeriod>(getWeekPeriod(new Date()));
-  const [allUsersList, setAllUsersList] = useState<{ uid: string; email: string; displayName: string; role: string; photoURL?: string }[]>([]);
+  const [allUsersList, setAllUsersList] = useState<AppUserItem[]>(getInitialLocalUsers);
 
-  // 1. Listen to global settings
+  // Guarantee current logged in user is in allUsersList immediately
+  useEffect(() => {
+    if (!currentUser) return;
+    const cleanEmail = currentUser.email?.toLowerCase().trim() || '';
+    const isMaster = cleanEmail === 'gierso@gmail.com';
+
+    setAllUsersList((prev) => {
+      const map = new Map<string, AppUserItem>();
+      prev.forEach((u) => {
+        if (u.email) map.set(u.email.toLowerCase().trim(), u);
+      });
+
+      const existing = map.get(cleanEmail);
+      const userItem: AppUserItem = {
+        uid: currentUser.uid,
+        email: cleanEmail,
+        displayName: existing?.displayName || currentUser.displayName || cleanEmail.split('@')[0] || 'Usuario',
+        role: isMaster ? 'admin' : (existing?.role || userProfile?.role || 'viewer'),
+        photoURL: currentUser.photoURL || existing?.photoURL || undefined,
+      };
+
+      map.set(cleanEmail, userItem);
+      const merged = Array.from(map.values());
+      saveUsersToLocalStorage(merged);
+      return merged;
+    });
+  }, [currentUser, userProfile]);
+
+  // 1. Listen to global settings (with robust conflict resolution)
   useEffect(() => {
     if (!currentUser) return;
 
@@ -107,24 +174,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as AppSettings;
+          const currentLocal = getInitialLocalSettings();
+
+          // Compare timestamps to prevent older server data from clobbering user's latest rate change
+          const localUpdated = currentLocal.updatedAt ? new Date(currentLocal.updatedAt).getTime() : 0;
+          const remoteUpdated = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+
+          if (localUpdated > remoteUpdated) {
+            // Local change is more recent: keep local and sync to Firestore
+            setDoc(settingsRef, currentLocal, { merge: true }).catch((e) =>
+              console.debug('Syncing newer local settings to cloud:', e)
+            );
+            return;
+          }
+
+          const rate = typeof data.currentHourlyRate === 'number'
+            ? data.currentHourlyRate
+            : Number(data.currentHourlyRate);
+
           const merged: AppSettings = {
-            currentHourlyRate: Number(data.currentHourlyRate) || 100,
-            currency: data.currency || '$',
-            nannyName: data.nannyName || 'Niñera',
+            currentHourlyRate: !isNaN(rate) && rate > 0 ? rate : currentLocal.currentHourlyRate,
+            currency: data.currency || currentLocal.currency || '$',
+            nannyName: data.nannyName || currentLocal.nannyName || 'Niñera',
             updatedAt: data.updatedAt,
             updatedBy: data.updatedBy,
           };
           setSettings(merged);
           saveSettingsToLocalStorage(merged);
         } else {
-          // Initialize default settings doc if missing and user can edit
-          if (canEdit) {
-            setDoc(settingsRef, {
-              ...DEFAULT_SETTINGS,
-              updatedAt: new Date().toISOString(),
-              updatedBy: currentUser.email,
-            }).catch((err) => console.debug('Could not initialize settings document:', err));
-          }
+          // Document does not exist in Firestore: seed with current local settings
+          const currentLocal = getInitialLocalSettings();
+          setDoc(settingsRef, {
+            ...currentLocal,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUser.email || 'system',
+          }).catch((err) => console.debug('Could not initialize settings document:', err));
         }
       },
       (error) => {
@@ -189,34 +273,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, [currentUser]);
 
-  // 3. Listen to all registered users (for admin user management)
+  // 3. Listen to all registered users (for family user management and sharing)
   useEffect(() => {
-    if (!currentUser || !isAdmin) return;
+    if (!currentUser) return;
 
     const usersCol = collection(db, 'users');
     const unsubscribe = onSnapshot(
       usersCol,
       (snapshot) => {
-        const users: { uid: string; email: string; displayName: string; role: string; photoURL?: string }[] = [];
+        const remoteUsers: AppUserItem[] = [];
         snapshot.forEach((docSnap) => {
           const d = docSnap.data();
-          users.push({
+          const email = (d.email || '').toLowerCase().trim();
+          if (!email) return;
+
+          remoteUsers.push({
             uid: docSnap.id,
-            email: d.email || '',
-            displayName: d.displayName || 'Usuario',
-            role: d.role || 'viewer',
+            email,
+            displayName: d.displayName || email.split('@')[0] || 'Usuario',
+            role: (email === 'gierso@gmail.com' ? 'admin' : (d.role || 'viewer')) as UserRole,
             photoURL: d.photoURL,
+            isPreAuthorized: d.isPreAuthorized || false,
           });
         });
-        setAllUsersList(users);
+
+        setAllUsersList((prevLocal) => {
+          const map = new Map<string, AppUserItem>();
+
+          // 1. Start with previous local cache
+          prevLocal.forEach((u) => {
+            if (u.email) {
+              map.set(u.email.toLowerCase().trim(), u);
+            }
+          });
+
+          // 2. Merge remote users, deduplicating invites vs real Google profiles
+          remoteUsers.forEach((ru) => {
+            const emailKey = ru.email.toLowerCase().trim();
+            const existing = map.get(emailKey);
+            if (!existing) {
+              map.set(emailKey, ru);
+            } else {
+              const isInvite = ru.uid.startsWith('invite_');
+              // If we have a real UID, prefer it over an invite_ placeholder
+              const finalUid = isInvite && !existing.uid.startsWith('invite_') ? existing.uid : ru.uid;
+              map.set(emailKey, {
+                ...existing,
+                ...ru,
+                uid: finalUid,
+                displayName: ru.displayName || existing.displayName,
+                photoURL: ru.photoURL || existing.photoURL,
+                role: emailKey === 'gierso@gmail.com' ? 'admin' : (ru.role || existing.role),
+              });
+            }
+          });
+
+          // 3. Guarantee current user is always included
+          if (currentUser?.email) {
+            const curEmail = currentUser.email.toLowerCase().trim();
+            const existingSelf = map.get(curEmail);
+            map.set(curEmail, {
+              uid: currentUser.uid,
+              email: curEmail,
+              displayName: currentUser.displayName || existingSelf?.displayName || curEmail.split('@')[0] || 'Usuario',
+              role: curEmail === 'gierso@gmail.com' ? 'admin' : (existingSelf?.role || userProfile?.role || 'viewer'),
+              photoURL: currentUser.photoURL || existingSelf?.photoURL || undefined,
+            });
+          }
+
+          const merged = Array.from(map.values());
+          saveUsersToLocalStorage(merged);
+          return merged;
+        });
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'users');
+        console.debug('Users listener note:', error);
       }
     );
 
     return () => unsubscribe();
-  }, [currentUser, isAdmin]);
+  }, [currentUser, userProfile]);
 
   // Navigation functions for weeks
   const goToPreviousWeek = () => {
@@ -474,20 +610,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }).catch((err) => console.warn('Sync toggle status notice:', err));
   };
 
-  const updateUserRole = async (uid: string, newRole: 'admin' | 'editor' | 'viewer') => {
-    if (!currentUser || !isAdmin) {
-      throw new Error('Solo los administradores pueden cambiar roles de usuario.');
-    }
+  const addOrInviteUser = async (userToInvite: {
+    email: string;
+    displayName: string;
+    role: UserRole;
+  }) => {
+    const cleanEmail = userToInvite.email.toLowerCase().trim();
+    if (!cleanEmail) return;
 
-    setAllUsersList((prev) =>
-      prev.map((u) => (u.uid === uid ? { ...u, role: newRole } : u))
-    );
+    const docId = `invite_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const userItem: AppUserItem = {
+      uid: docId,
+      email: cleanEmail,
+      displayName: userToInvite.displayName.trim() || cleanEmail.split('@')[0],
+      role: userToInvite.role,
+      isPreAuthorized: true,
+    };
 
-    const targetUserRef = doc(db, 'users', uid);
-    updateDoc(targetUserRef, {
-      role: newRole,
+    // 1. Update state and localStorage immediately (0ms delay)
+    setAllUsersList((prev) => {
+      const map = new Map<string, AppUserItem>();
+      prev.forEach((u) => {
+        if (u.email) map.set(u.email.toLowerCase().trim(), u);
+      });
+      map.set(cleanEmail, userItem);
+      const updated = Array.from(map.values());
+      saveUsersToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. Sync to Firestore in background
+    const userRef = doc(db, 'users', docId);
+    setDoc(userRef, {
+      ...userItem,
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    }).catch((error) => {
+      firestoreTimestamp: serverTimestamp(),
+    }).catch((err) => {
+      console.warn('Background invite user sync notice:', err);
+    });
+  };
+
+  const updateUserRole = async (uidOrEmail: string, newRole: UserRole) => {
+    // 1. Update locally immediately
+    setAllUsersList((prev) => {
+      const updated = prev.map((u) => {
+        if (u.uid === uidOrEmail || u.email.toLowerCase().trim() === uidOrEmail.toLowerCase().trim()) {
+          return { ...u, role: newRole };
+        }
+        return u;
+      });
+      saveUsersToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. Background sync
+    const target = allUsersList.find(
+      (u) => u.uid === uidOrEmail || u.email.toLowerCase().trim() === uidOrEmail.toLowerCase().trim()
+    );
+    const targetDocId = target?.uid || uidOrEmail;
+    const targetUserRef = doc(db, 'users', targetDocId);
+    setDoc(
+      targetUserRef,
+      {
+        role: newRole,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    ).catch((error) => {
       console.warn('Background user role sync notice:', error);
     });
   };
@@ -513,6 +703,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleShiftStatus,
         allUsersList,
         updateUserRole,
+        addOrInviteUser,
       }}
     >
       {children}
