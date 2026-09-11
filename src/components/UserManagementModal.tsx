@@ -12,6 +12,7 @@ import {
   Mail,
   CheckCircle2,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 
 interface UserManagementModalProps {
@@ -24,12 +25,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   onClose,
 }) => {
   const { currentUser, isAdmin } = useAuth();
-  const { allUsersList, updateUserRole, addOrInviteUser } = useApp();
+  const { allUsersList, updateUserRole, addOrInviteUser, deleteUser } = useApp();
 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<UserRole>('editor');
   const [inviteName, setInviteName] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [userToDelete, setUserToDelete] = useState<{ uid: string; name: string; email: string } | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   if (!isOpen) return null;
@@ -78,6 +81,30 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       });
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete) return;
+
+    setDeletingId(userToDelete.uid);
+    setMessage(null);
+
+    try {
+      await deleteUser(userToDelete.uid);
+      setMessage({
+        type: 'success',
+        text: `El usuario ${userToDelete.name || userToDelete.email} fue eliminado correctamente.`,
+      });
+      setUserToDelete(null);
+      setTimeout(() => setMessage(null), 3500);
+    } catch (err: any) {
+      setMessage({
+        type: 'error',
+        text: err.message || 'Error al eliminar usuario.',
+      });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -273,25 +300,42 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Role Selector */}
-                      <div className="w-full sm:w-auto flex items-center justify-end">
+                      {/* Role Selector & Delete Action */}
+                      <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2">
                         {isMasterAdmin ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold bg-amber-500/10 text-amber-700 border border-amber-500/20">
+                          <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500/10 text-amber-700 border border-amber-500/20">
                             <ShieldCheck className="w-3.5 h-3.5" />
                             Admin Principal
                           </span>
                         ) : (
-                          <select
-                            value={user.role}
-                            onChange={(e) =>
-                              handleRoleChange(user.uid, e.target.value as UserRole)
-                            }
-                            className="px-3 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-semibold text-stone-800 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
-                          >
-                            <option value="admin">Administrador</option>
-                            <option value="editor">Super Usuario (Editor)</option>
-                            <option value="viewer">Solo Lectura</option>
-                          </select>
+                          <>
+                            <select
+                              value={user.role}
+                              onChange={(e) =>
+                                handleRoleChange(user.uid, e.target.value as UserRole)
+                              }
+                              className="px-3 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-semibold text-stone-800 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                            >
+                              <option value="admin">Administrador</option>
+                              <option value="editor">Super Usuario (Editor)</option>
+                              <option value="viewer">Solo Lectura</option>
+                            </select>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setUserToDelete({
+                                  uid: user.uid,
+                                  name: user.displayName,
+                                  email: user.email,
+                                })
+                              }
+                              title="Eliminar usuario del sistema"
+                              className="p-1.5 rounded-lg text-stone-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -301,6 +345,46 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
             )}
           </div>
         </div>
+
+        {/* Modal de confirmación de eliminación */}
+        {userToDelete && (
+          <div className="fixed inset-0 z-60 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl border border-stone-200 shadow-2xl max-w-sm w-full p-5 animate-in fade-in zoom-in-95">
+              <div className="flex items-center gap-3 mb-3 text-red-600">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-stone-900">¿Eliminar usuario?</h4>
+                  <p className="text-xs text-stone-500">Esta acción revoca sus accesos</p>
+                </div>
+              </div>
+              <p className="text-xs text-stone-600 mb-4">
+                ¿Seguro que deseas eliminar a{' '}
+                <strong className="text-stone-900 font-semibold">{userToDelete.name || userToDelete.email}</strong>{' '}
+                ({userToDelete.email})? Ya no podrá acceder ni editar turnos.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={deletingId !== null}
+                  onClick={() => setUserToDelete(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-700 hover:bg-stone-100 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingId !== null}
+                  onClick={handleConfirmDelete}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-xs disabled:opacity-50"
+                >
+                  {deletingId ? 'Eliminando...' : 'Sí, eliminar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="px-6 py-3 bg-stone-50 border-t border-stone-100 flex justify-end">

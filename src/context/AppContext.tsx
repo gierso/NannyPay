@@ -43,6 +43,7 @@ interface AppContextType {
   allUsersList: AppUserItem[];
   updateUserRole: (uid: string, newRole: UserRole) => Promise<void>;
   addOrInviteUser: (user: { email: string; displayName: string; role: UserRole }) => Promise<void>;
+  deleteUser: (uidOrEmail: string) => Promise<void>;
 }
 
 export interface AppUserItem {
@@ -682,6 +683,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const deleteUser = async (uidOrEmail: string) => {
+    const cleanIdOrEmail = uidOrEmail.toLowerCase().trim();
+    if (cleanIdOrEmail === 'gierso@gmail.com') {
+      throw new Error('No es posible eliminar la cuenta del Administrador Principal.');
+    }
+
+    const targetUser = allUsersList.find(
+      (u) => u.uid === uidOrEmail || u.email.toLowerCase().trim() === cleanIdOrEmail
+    );
+
+    if (targetUser && targetUser.email.toLowerCase().trim() === 'gierso@gmail.com') {
+      throw new Error('No es posible eliminar la cuenta del Administrador Principal.');
+    }
+
+    // 1. Actualización inmediata en UI y almacenamiento local
+    setAllUsersList((prev) => {
+      const updated = prev.filter(
+        (u) => u.uid !== uidOrEmail && u.email.toLowerCase().trim() !== cleanIdOrEmail
+      );
+      saveUsersToLocalStorage(updated);
+      return updated;
+    });
+
+    // 2. Sincronización robusta en Firestore en segundo plano
+    const docsToDelete: string[] = [];
+    if (targetUser?.uid) {
+      docsToDelete.push(targetUser.uid);
+    }
+    if (targetUser?.email) {
+      const inviteId = `invite_${targetUser.email.toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_')}`;
+      if (!docsToDelete.includes(inviteId)) {
+        docsToDelete.push(inviteId);
+      }
+    }
+    if (!docsToDelete.includes(uidOrEmail)) {
+      docsToDelete.push(uidOrEmail);
+    }
+
+    // Borrar de Firestore silenciosa y concurrentemente
+    docsToDelete.forEach((dId) => {
+      const userRef = doc(db, 'users', dId);
+      deleteDoc(userRef).catch((err) => {
+        console.warn(`Aviso de borrado en Firestore para ${dId}:`, err);
+      });
+    });
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -704,6 +752,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         allUsersList,
         updateUserRole,
         addOrInviteUser,
+        deleteUser,
       }}
     >
       {children}
